@@ -1,0 +1,218 @@
+import pickle
+import tensorflow as tf
+import pandas as pd
+import numpy as np
+from statistics import mode
+from sklearn.model_selection import train_test_split
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder, Imputer
+
+filename = "./titanic/train.csv"
+train = pd.read_csv(filename)
+train.shape
+train.columns.values
+
+#Preprocess and clean
+
+Y_true = train['Survived'].copy()
+X = train.copy()
+del X['Survived'] 
+X.info()
+del(X['Cabin'])
+del(X['Ticket'])
+np.mean(X['Age'])
+X['Age'] = X['Age'].fillna(np.mean(X['Age']))
+X.groupby('Embarked').count()
+X['Embarked'] = X['Embarked'].fillna(mode(X['Embarked']))
+X.head()
+preprocessed_X = X.copy()
+
+#One hot encoding
+
+categorical_columns = ['Pclass','Sex','Embarked']
+le = LabelEncoder()
+preprocessed_X[categorical_columns] = preprocessed_X[categorical_columns].apply(lambda col: le.fit_transform(col))
+enc = OneHotEncoder(sparse=False )
+# preprocessed_X = enc.fit(preprocessed_X)
+pclass_ohe = preprocessed_X[['Pclass']]
+sex_ohe = preprocessed_X[['Sex']]
+emb_ohe = preprocessed_X[['Embarked']]
+pclass_ohe = enc.fit_transform(pclass_ohe)
+sex_ohe = enc.fit_transform(sex_ohe)
+emb_ohe = enc.fit_transform(emb_ohe)
+del(preprocessed_X['Pclass'])
+del(preprocessed_X['Embarked'])
+del(preprocessed_X['Sex'])
+preprocessed_X['PC1'] = pclass_ohe[:,0]
+preprocessed_X['PC2'] = pclass_ohe[:,1]
+preprocessed_X['PC3'] = pclass_ohe[:,2]
+preprocessed_X['S1'] = sex_ohe[:,0]
+preprocessed_X['S2'] = sex_ohe[:,1]
+preprocessed_X['E1'] = emb_ohe[:,0]
+preprocessed_X['E2'] = emb_ohe[:,1]
+preprocessed_X['E3'] = emb_ohe[:,2]
+
+#Creating tf-idf features
+
+name = preprocessed_X['Name']
+vectorizer = TfidfVectorizer(max_features = 200)
+name = vectorizer.fit_transform(name).toarray()
+name = pd.DataFrame(name)
+name.head()
+del preprocessed_X['Name']
+preprocessed_X = pd.concat([preprocessed_X, name], axis = 1)
+preprocessed_X.to_csv("Titanic_features.csv")
+
+#Train test split
+
+# Y_ohe = Y_ohe.to_frame()
+Y_true = Y_true.to_frame()
+X_train, X_dev, y_train, y_dev = train_test_split(preprocessed_X, Y_true, test_size=0.16, random_state=42)
+X_train = X_train.T
+X_dev = X_dev.T
+y_train = y_train.T
+y_dev = y_dev.T
+
+def one_hot_encode(Y):
+    return enc.transform(Y)
+
+def create_mini_batches(X, y, batch_size, seed): 
+    mini_batches = [] 
+    data = np.hstack((X.T, y.T)) 
+    np.random.seed(seed)
+    np.random.shuffle(data) 
+    n_minibatches = data.shape[0] // batch_size 
+    i = 0
+  
+    for i in range(n_minibatches + 1): 
+        mini_batch = data[i * batch_size:(i + 1)*batch_size, :] 
+        X_mini = mini_batch[:, :-1] 
+        Y_mini = mini_batch[:, -1].reshape((-1, 1)) 
+        mini_batches.append((X_mini, Y_mini)) 
+    if data.shape[0] % batch_size != 0: 
+        mini_batch = data[i * batch_size:data.shape[0]] 
+        X_mini = mini_batch[:, :-1] 
+        Y_mini = mini_batch[:, -1].reshape((-1, 1)) 
+        mini_batches.append((X_mini, Y_mini)) 
+    return mini_batches
+
+def create_placeholders(n_x, n_y):
+    X = tf.placeholder(tf.float32, shape=(n_x, None))
+    Y = tf.placeholder(tf.float32, shape=(n_y, None))
+    
+    return X, Y
+
+def initialize_parameters():
+    W1 = tf.get_variable("W1", [25,213], initializer = tf.contrib.layers.xavier_initializer(seed = 1), trainable=True)
+    b1 = tf.get_variable("b1", [25,1], initializer = tf.zeros_initializer())
+    W2 = tf.get_variable("W2", [12, 25], initializer = tf.contrib.layers.xavier_initializer(seed = 1), trainable=True)
+    b2 = tf.get_variable("b2", [12,1], initializer = tf.zeros_initializer())
+    W3 = tf.get_variable("W3", [2, 12], initializer = tf.contrib.layers.xavier_initializer(seed = 1), trainable=True)
+    b3 = tf.get_variable("b3", [2,1], initializer = tf.zeros_initializer())
+#     W4 = tf.get_variable("W4", [2, 6], initializer = tf.contrib.layers.xavier_initializer(seed = 1))
+#     b4 = tf.get_variable("b4", [2,1], initializer = tf.zeros_initializer())
+    
+    parameters = {"W1": W1,
+                  "b1": b1,
+                  "W2": W2,
+                  "b2": b2,
+                  "W3": W3,
+                  "b3": b3}
+#                   "W4": W4,
+#                   "b4": b4}
+    
+    return parameters
+ 
+def forward_propagation(X, parameters):
+    W1 = parameters['W1']
+    b1 = parameters['b1']
+    W2 = parameters['W2']
+    b2 = parameters['b2']
+    W3 = parameters['W3']
+    b3 = parameters['b3']
+#     W4 = parameters['W4']
+#     b4 = parameters['b4']
+    
+    Z1 = tf.add(tf.matmul(W1, X),b1)                                              # Z1 = np.dot(W1, X) + b1
+    A1 = tf.nn.relu(Z1)                                              # A1 = relu(Z1)
+    Z2 = tf.add(tf.matmul(W2, A1),b2)                                              # Z2 = np.dot(W2, a1) + b2
+    A2 = tf.nn.relu(Z2)                                              # A2 = relu(Z2)
+    Z3 = tf.add(tf.matmul(W3, A2),b3)  
+#     A3 = tf.nn.relu(Z3)
+#     Z4 = tf.add(tf.matmul(W4,A3),b4)
+    
+    return Z3
+
+def compute_cost(Z3,Y):
+    logits = tf.transpose(Z3)
+    labels = tf.transpose(Y)
+    
+    cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits = logits, labels = labels))
+    
+    return cost
+
+def model(X_train, y_train, X_dev, y_dev, learning_rate = 0.0005,
+          num_epochs = 500, minibatch_size = 16, print_cost = True):
+    
+    tf.reset_default_graph()                         # to be able to rerun the model without overwriting tf variables
+    tf.set_random_seed(1)                             # to keep consistent results
+    seed = 3                                          # to keep consistent results
+    (n_x, m) = X_train.shape                          # (n_x: input size, m : number of examples in the train set)
+    n_y = 2                           # n_y : output size
+    costs = []
+    
+    X, Y = create_placeholders(n_x, n_y)
+    parameters = initialize_parameters()
+    Z3 = forward_propagation(X, parameters)
+    cost = compute_cost(Z3, Y)
+    optimizer = tf.train.AdamOptimizer(learning_rate = learning_rate).minimize(cost)
+    init = tf.global_variables_initializer()
+    
+    with tf.Session() as sess:
+        sess.run(init)
+        
+        for epoch in range(num_epochs):
+            epoch_cost = 0
+            num_minibatches = int(m / minibatch_size) # number of minibatches of size minibatch_size in the train set
+            seed = seed + 1
+            minibatches = create_mini_batches(X_train, y_train, minibatch_size, seed)
+#             print(len(minibatches[0]))
+            for i in range(len(minibatches)-1):
+                (minibatch_X, minibatch_Y) = minibatches[i]
+#                 print(minibatch_Y.shape)\
+#                 print(minibatch_X.shape)
+                minibatch_Y = one_hot_encode(minibatch_Y)
+                _ , minibatch_cost = sess.run([optimizer, cost], feed_dict={X: minibatch_X.T, Y: minibatch_Y.T})
+                epoch_cost += minibatch_cost / num_minibatches
+
+            if print_cost == True and epoch % 50 == 0:
+                print ("Cost after epoch %i: %f" % (epoch, epoch_cost))
+            if print_cost == True and epoch % 5 == 0:
+                costs.append(epoch_cost)
+                
+        parameters = sess.run(parameters)
+        print ("Parameters have been trained!")
+        correct_prediction = tf.equal(tf.argmax(Z3), tf.argmax(Y))
+        accuracy = tf.reduce_mean(tf.cast(correct_prediction, "float"))
+        y_train = one_hot_encode(y_train.T).T
+        y_dev = one_hot_encode(y_dev.T).T
+        print ("Train Accuracy:", accuracy.eval({X: X_train, Y: y_train}))
+        print ("Dev set Accuracy:", accuracy.eval({X: X_dev, Y: y_dev}))
+        
+        return parameters
+   
+   parameters = model(X_train, y_train, X_dev, y_dev)
+   
+"""Cost after epoch 0: 4.979405
+Cost after epoch 50: 0.418876
+Cost after epoch 100: 0.333253
+Cost after epoch 150: 0.291133
+Cost after epoch 200: 0.248539
+Cost after epoch 250: 0.224047
+Cost after epoch 300: 0.214171
+Cost after epoch 350: 0.200338
+Cost after epoch 400: 0.176601
+Cost after epoch 450: 0.174501
+Parameters have been trained!
+Train Accuracy: 0.934492
+Dev set Accuracy: 0.7762238"""
