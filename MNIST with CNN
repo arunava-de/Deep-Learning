@@ -1,0 +1,93 @@
+import numpy as np
+import pandas as pd
+from keras import layers
+from keras.layers import Input, Dense, Activation, ZeroPadding2D, BatchNormalization, Flatten, Conv2D
+from keras.layers import AveragePooling2D, MaxPooling2D, Dropout, GlobalMaxPooling2D, GlobalAveragePooling2D
+from keras.models import Model
+from keras.preprocessing import image
+from keras.utils import layer_utils
+from keras.utils.data_utils import get_file
+from keras.applications.imagenet_utils import preprocess_input
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import OneHotEncoder
+import pydot
+from IPython.display import SVG
+from keras.utils.vis_utils import model_to_dot
+from keras.utils import plot_model
+
+import keras.backend as K
+K.set_image_data_format('channels_last')
+import matplotlib.pyplot as plt
+from matplotlib.pyplot import imshow
+
+%matplotlib inline
+
+data = pd.read_csv("./mnist_train.csv")
+labels = data['label']
+del(data['label'])
+X_train, X_test, Y_train, Y_test = train_test_split(data, labels, test_size = 0.1, random_state = 33)
+X_train = X_train/255
+X_test = X_test/255
+Y_train = Y_train.to_frame()
+Y_test = Y_test.to_frame()
+
+X_train = X_train.values.reshape(-1,28,28,1)
+X_test = X_test.values.reshape(-1,28,28,1)
+enc = OneHotEncoder(handle_unknown='ignore')
+enc.fit(Y_train)
+Y_train = enc.transform(Y_train).toarray()
+Y_test = enc.transform(Y_test).toarray()
+
+# GRADED FUNCTION: HappyModel
+
+def DigitModel(input_shape):
+    """
+    Implementation of the DigitModel.
+    
+    Arguments:
+    input_shape -- shape of the images of the dataset
+
+    Returns:
+    model -- a Model() instance in Keras
+    """
+    X_input = Input(input_shape)
+
+    # Zero-Padding: pads the border of X_input with zeroes
+    X = ZeroPadding2D((3, 3))(X_input)
+
+    # CONV -> BN -> RELU Block applied to X
+    X = Conv2D(32, (7, 7), strides = (1, 1), name = 'conv0')(X)
+#     X = BatchNormalization(axis = 3, name = 'bn0')(X)
+    X = Activation('relu')(X)
+
+    # MAXPOOL
+    X = MaxPooling2D((2, 2), name='max_pool')(X)
+
+    # FLATTEN X (means convert it to a vector) + FULLYCONNECTED
+    X = Flatten()(X)
+    X = Dense(10, activation='sigmoid', name='fc')(X)
+
+    # Create model. This creates your Keras model instance, you'll use this instance to train/test the model.
+    model = Model(inputs = X_input, outputs = X, name='DigitModel')
+
+    ### END CODE HERE ###
+    
+    return model
+    
+digitModel = DigitModel((28,28,1))
+digitModel.compile(optimizer = "Adam", loss = "categorical_crossentropy", metrics = ["accuracy"])
+digitModel.fit(x = X_train, y = Y_train, epochs = 20, batch_size = 32)
+preds = digitModel.evaluate(x = X_test, y = Y_test)
+print()
+print ("Loss = " + str(preds[0]))
+print ("Test Accuracy = " + str(preds[1]))
+
+#TRAINING:
+Epoch 20/20
+37800/37800 [==============================] - 35s 934us/step - loss: 0.0010 - acc: 0.9997
+
+#TEST
+4200/4200 [==============================] - 2s 426us/step
+
+Loss = 0.015701997184161362
+Test Accuracy = 0.9961666602180118
