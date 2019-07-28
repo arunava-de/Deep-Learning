@@ -1,0 +1,63 @@
+from matplotlib import image
+from matplotlib import pyplot
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import OneHotEncoder
+from keras import layers
+from keras.layers import Input, Dense, Activation, ZeroPadding2D, BatchNormalization, Flatten, Conv2D
+from keras.layers import AveragePooling2D, MaxPooling2D, Dropout, GlobalMaxPooling2D, GlobalAveragePooling2D
+from keras.models import Model
+import pandas as pd
+import numpy as np
+
+data = pd.read_csv("./train.csv") 
+loaded_images = []
+data.columns.values
+
+for filename in data['id']:
+    loaded_images.append(image.imread('./train/'+filename))
+    
+X = np.asarray(loaded_images)
+
+Y = data['has_cactus']
+X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size = 0.9, random_state = 33)
+X_train = X_train/255
+X_test = X_test/255
+Y_train = Y_train.to_frame()
+Y_test = Y_test.to_frame()
+
+enc = OneHotEncoder(handle_unknown='ignore')
+enc.fit(Y_train)
+Y_train = enc.transform(Y_train).toarray()
+Y_test = enc.transform(Y_test).toarray()
+
+def Cactus_Model(input_shape):
+    X_input = Input(input_shape)
+#     X = ZeroPadding2D((3,3))(X_input)
+    X = Conv2D(6, (5, 5), strides = (1, 1), name = 'conv0')(X_input)
+    X = Activation('relu')(X)
+    X = MaxPooling2D((2,2), strides = (2,2), name = 'maxpool0')(X)
+    X = Conv2D(16, (5, 5), strides = (1, 1), name = 'conv1')(X)
+    X = Activation('relu')(X)
+    X = MaxPooling2D((2,2), strides = (2,2), name = 'maxpool1')(X)
+    X = Flatten()(X)
+    X = Dense(120, activation='relu', name='fc0')(X)
+    X = Dense(84, activation='relu', name='fc1')(X)
+    X = Dense(2, activation = 'sigmoid', name='fc2')(X)
+    model = Model(inputs = X_input, outputs = X, name='Cactus_Model')
+    
+    return model
+
+cactusModel = Cactus_Model((32,32,3))
+cactusModel.compile(optimizer = "Adam", loss = "binary_crossentropy", metrics = ["accuracy"])
+
+cactusModel.fit(x = X_train, y = Y_train, epochs = 5, batch_size = 64)
+
+preds = cactusModel.evaluate(x = X_test, y = Y_test)
+print()
+print ("Loss = " + str(preds[0]))
+print ("Test Accuracy = " + str(preds[1]))
+
+1750/1750 [==============================] - 0s 198us/step
+
+Loss = 0.07723712597574507
+Test Accuracy = 0.9751428569384983
