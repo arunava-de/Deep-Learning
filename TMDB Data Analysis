@@ -1,0 +1,804 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[104]:
+
+
+import warnings 
+warnings.filterwarnings('ignore')
+import numpy as np
+import matplotlib.pyplot as plt
+get_ipython().run_line_magic('matplotlib', 'inline')
+import pandas as pd
+from scipy import stats
+from scipy import stats, special
+from sklearn import model_selection, metrics, linear_model, datasets, feature_selection
+from sklearn import neighbors 
+from sklearn.preprocessing import StandardScaler
+import time
+from scipy import io 
+from sklearn.preprocessing import StandardScaler 
+from sklearn.model_selection import train_test_split 
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import cross_val_score, KFold
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.metrics import confusion_matrix
+from sklearn.model_selection import cross_validate
+from sklearn.preprocessing import LabelEncoder
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+import json
+import seaborn as sns
+import ast
+
+
+# In[123]:
+
+
+train = pd.read_csv('./tmdb-box-office-prediction/train.csv')
+test = pd.read_csv('./tmdb-box-office-prediction/test.csv')
+
+
+# In[106]:
+
+
+train.head()
+#Potential removals: imdb_id, poster_path
+
+
+# In[30]:
+
+
+#Numeric columns: budget, popularity, runtime, revenue
+#Looking at numeric columns first
+
+
+# In[72]:
+
+
+train.sort_values('budget', ascending=False)
+
+
+# In[73]:
+
+
+train.sort_values('revenue', ascending=False)
+
+
+# In[74]:
+
+
+train.columns
+
+
+# In[34]:
+
+
+plt.figure(figsize=(8,6))
+plt.scatter((train['budget']),(train['revenue']))
+plt.title('Revenue vs Budget')
+plt.xlabel('Budget')
+plt.ylabel('Revenue')
+
+
+# In[75]:
+
+
+#Using log scale to separate out lower half of the plot and check trends there
+plt.figure(figsize=(8,6))
+plt.scatter(np.log10(train['budget']),np.log10(train['revenue']))
+plt.title('Revenue vs Budget on log scale')
+plt.xlabel('Budget log10')
+plt.ylabel('Revenue log10')
+
+
+# In[76]:
+
+
+#Seems like there's a positive correlation. Let's check
+np.corrcoef(train['budget'],train['revenue'])
+#Correlation coeff of 0.75
+
+
+# In[77]:
+
+
+plt.figure(figsize=(8,6))
+plt.scatter(np.log10(train['popularity']),np.log10(train['revenue']))
+plt.title('Popularity vs Revenue on log scale')
+plt.xlabel('Popularity log10')
+plt.ylabel('Revenue log10')
+
+
+# In[78]:
+
+
+#Again, positive correlation
+np.corrcoef(train['popularity'],train['revenue'])
+
+
+# In[79]:
+
+
+#Horizontal Barplot for top 10 budget movies
+train.sort_values('budget', ascending=False).head(10).plot(x='original_title', y='budget', kind='barh')
+plt.xlabel('Budget (USD)')
+
+
+# In[80]:
+
+
+#Horizontal Barplot for top 10 revenue movies
+train.sort_values('revenue', ascending=False).head(10).plot(x='original_title', y='budget', kind='barh')
+plt.xlabel('Revenue (USD)')
+
+
+# In[81]:
+
+
+#Create a new feature for profits generated, and check horizontal barplot for top 10 profiting movies
+train.assign(profit = lambda df: df['revenue']-df['budget']).sort_values('profit',ascending=False).head(10).plot(x='original_title', y='profit', kind='barh')
+plt.xlabel('Profit (USD)')
+
+
+# In[82]:
+
+
+#Let's check flop movies as well, specifically bottom 10
+train.assign(profit = lambda df: df['revenue']-df['budget']).sort_values('profit',ascending=False).tail(10).plot(x='original_title', y='profit', kind='barh')
+plt.xlabel('Profit (USD)')
+
+
+# In[83]:
+
+
+movie_flops = train.assign(profit = lambda df: df['revenue']-df['budget'])['profit']<0
+#Listing flop movies
+train[movie_flops].head
+
+
+# In[84]:
+
+
+#Let's check popularity of these flop movies
+print("Highest popularity score of flop movies:",np.max(train[movie_flops]['popularity']))
+print("Highest popularity score of all movies:",np.max(train['popularity']))
+
+print("Mean popularity score of flop movies:",np.mean(train[movie_flops]['popularity']))
+print("Mean popularity score of hit/average movies:",np.mean(train[~movie_flops]['popularity']))
+
+
+# In[107]:
+
+
+#Parsing function for Genres json files
+def parse_json(x):
+    try:
+        return json.loads(x.replace("'", '"'))[0]['name']
+    except:
+        return ''
+
+
+# In[108]:
+
+
+train['collection'] = ~train['belongs_to_collection'].isna()
+
+
+# In[109]:
+
+
+train['collection'].value_counts()
+
+
+# In[88]:
+
+
+fig, ax = plt.subplots(figsize=(8,6))
+ax.set_yscale('symlog')
+sns.boxplot(x='collection',y='revenue',data=train,ax=ax)
+#Seems like treating collection as categorical might prove useful
+
+
+# In[89]:
+
+
+train['production_companies'].head(10)
+
+
+# In[110]:
+
+
+train['production_companies'] = train['production_companies'].apply(parse_json)
+
+
+# In[111]:
+
+
+train['production_companies'].head(10)
+
+
+# In[92]:
+
+
+train.groupby('production_companies')['revenue'].mean().sort_values(ascending=False).head(20).plot(kind='barh')
+plt.xlabel('Revenue [USD]')
+#Checking which production companies have higher revenue on average
+
+
+# In[93]:
+
+
+#Let us see how 'overview' and 'tagline' influences the revenue by using sentiment analysis
+analyser  = SentimentIntensityAnalyzer()
+
+
+# In[112]:
+
+
+train['overview'] = train['overview'].fillna('')
+train['tagline'] = train['tagline'].fillna('')
+
+
+# In[113]:
+
+
+analyser.polarity_scores(train['overview'].iloc[0])
+
+
+# In[114]:
+
+
+train['sentiment'] = train['overview'].apply(lambda x: analyser.polarity_scores(x.lower())['compound'])
+train['tag_sentiment'] = train['tagline'].apply(lambda x: analyser.polarity_scores(x.lower())['compound'])
+
+
+# In[115]:
+
+
+train[['sentiment','tag_sentiment']].corrwith(train['revenue'])
+
+
+# In[58]:
+
+
+#Nearly no correlation of overview and tagline sentiments with revenue
+
+
+# In[124]:
+
+
+import ast
+def text_to_list(x):
+    if pd.isna(x): 
+        return('')
+    else: 
+        return ast.literal_eval(x)
+
+
+# In[125]:
+
+
+ntrain = train.shape[0]
+ntest = test.shape[0]
+combined = pd.concat((train,test), sort = False)
+
+
+# In[126]:
+
+
+#Removing columns which will not be useful for predicting revenue
+combined.drop(columns=['id','imdb_id','poster_path','title','original_title'], inplace=True)
+
+
+# In[127]:
+
+
+combined.head(10)
+
+
+# In[128]:
+
+
+for col in ['genres','production_companies','production_countries','spoken_languages','Keywords','cast','crew']:
+    combined[col] = combined[col].apply(text_to_list)
+
+
+# In[129]:
+
+
+combined['belongs_to_collection'] = 1*(~combined['belongs_to_collection'].isna())
+
+
+# In[130]:
+
+
+combined['belongs_to_collection'].head(10)
+
+
+# In[131]:
+
+
+combined['tagline'] = 1*(~combined['tagline'].isna())
+combined['tagline'].head()
+
+
+# In[132]:
+
+
+combined['homepage'] = 1*(~combined['homepage'].isna())
+combined['homepage'].head()
+
+
+# In[134]:
+
+
+combined['overview'] = combined['overview'].str.len()
+combined['overview'].fillna(0,inplace=True)
+combined['overview'].head(10)
+
+
+# In[135]:
+
+
+combined['genre_number'] = combined['genres'].apply(lambda x: len(x))
+
+
+# In[136]:
+
+
+combined['genre_number'].head(10)
+
+
+# In[137]:
+
+
+combined['genre_number'].value_counts()
+
+
+# In[138]:
+
+
+#parse genre column to create three new features, signifying 3 genres of a particular movie
+def parse_genre(x):
+    if type(x) == str:
+        return pd.Series(['','',''], index=['genres1', 'genres2', 'genres3'] )
+    if len(x) == 1:
+        return pd.Series([x[0]['name'],'',''], index=['genres1', 'genres2', 'genres3'] )
+    if len(x) == 2:
+        return pd.Series([x[0]['name'],x[1]['name'],''], index=['genres1', 'genres2', 'genres3'] )
+    if len(x) > 2:
+        return pd.Series([x[0]['name'],x[1]['name'],x[2]['name']], index=['genres1', 'genres2', 'genres3'] )
+
+
+# In[139]:
+
+
+combined[['genre1','genre2','genre3']] = combined['genres'].apply(lambda x: parse_genre(x))
+combined.drop(columns='genres',inplace=True)
+
+
+# In[140]:
+
+
+combined['genre1'].head()
+
+
+# In[141]:
+
+
+combined['production_companies'].head()
+
+
+# In[142]:
+
+
+combined['production_companies_number'] = combined['production_companies'].apply(lambda x: len(x))
+
+
+# In[144]:
+
+
+combined['production_companies_number'].head()
+
+
+# In[145]:
+
+
+def parse_production_company(x):
+    if type(x) == str:
+        return pd.Series(['','',''], index=['prod1', 'prod2', 'prod3'] )
+    if len(x) == 1:
+        return pd.Series([x[0]['name'],'',''], index=['prod1', 'prod2', 'prod3'] )
+    if len(x) == 2:
+        return pd.Series([x[0]['name'],x[1]['name'],''], index=['prod1', 'prod2', 'prod3'] )
+    if len(x) > 2:
+        return pd.Series([x[0]['name'],x[1]['name'],x[2]['name']], index=['prod1', 'prod2', 'prod3'] )
+
+
+# In[146]:
+
+
+combined[['prod1','prod2','prod3']] = combined['production_companies'].apply(lambda x: parse_production_company(x))
+combined.drop(columns='production_companies', inplace=True)
+
+
+# In[147]:
+
+
+combined['prod1'].head()
+
+
+# In[148]:
+
+
+combined['production_countries_number'] = combined['production_countries'].apply(lambda x: len(x))
+combined['production_countries_number'].head()
+
+
+# In[149]:
+
+
+def parse_production_country(x):
+    if type(x) == str:
+        return pd.Series(['','',''], index=['country1', 'country2', 'country3'] )
+    if len(x) == 1:
+        return pd.Series([x[0]['name'],'',''], index=['country1', 'country2', 'country3'] )
+    if len(x) == 2:
+        return pd.Series([x[0]['name'],x[1]['name'],''], index=['country1', 'country2', 'country3'] )
+    if len(x) > 2:
+        return pd.Series([x[0]['name'],x[1]['name'],x[2]['name']], index=['country1', 'country2', 'country3'] )
+
+
+# In[150]:
+
+
+combined[['country1','country2','country3']] = combined['production_countries'].apply(lambda x: parse_production_company(x))
+combined.drop(columns='production_countries', inplace=True)
+
+
+# In[151]:
+
+
+combined['country1'].head()
+
+
+# In[152]:
+
+
+combined['keywords_number'] =         combined['Keywords'].apply(lambda x: len(x))
+combined['keywords_number'].head()
+
+
+# In[153]:
+
+
+def parse_keywords(x):
+    if type(x) == str:
+        return pd.Series(['','',''], index=['key1', 'key2', 'key3'])
+    if len(x) == 1:
+        return pd.Series([x[0]['name'],'',''], index=['key1', 'key2', 'key3'])
+    if len(x) == 2:
+        return pd.Series([x[0]['name'],x[1]['name'],''], index=['key1', 'key2', 'key3'])
+    if len(x) > 2:
+        return pd.Series([x[0]['name'],x[1]['name'],x[2]['name']], index=['key1', 'key2', 'key3'])
+
+
+# In[154]:
+
+
+combined[['key1', 'key2', 'key3']] =         combined['Keywords'].apply(parse_keywords)
+combined.drop(columns='Keywords', inplace=True)
+
+
+# In[155]:
+
+
+combined['key1'].head()
+
+
+# In[156]:
+
+
+combined['spoken_languages_number'] =         combined['spoken_languages'].apply(lambda x: len(x))
+combined['spoken_languages_number'].head()
+
+
+# In[157]:
+
+
+def parse_spoken_languages(x):
+    if type(x) == str:
+        return pd.Series(['','',''], index=['lang1', 'lang2', 'lang3'])
+    if len(x) == 1:
+        return pd.Series([x[0]['name'],'',''], index=['lang1', 'lang2', 'lang3'])
+    if len(x) == 2:
+        return pd.Series([x[0]['name'],x[1]['name'],''], index=['lang1', 'lang2', 'lang3'])
+    if len(x) > 2:
+        return pd.Series([x[0]['name'],x[1]['name'],x[2]['name']], index=['lang1', 'lang2', 'lang3'])
+
+
+# In[158]:
+
+
+combined[['lang1', 'lang2', 'lang3']] = combined['spoken_languages'].apply(parse_spoken_languages)
+combined.drop(columns='spoken_languages', inplace=True)
+
+
+# In[162]:
+
+
+# Parse and break-down the date column ('release_date' column)
+combined['release_date'] = pd.to_datetime(combined['release_date'], format='%m/%d/%y')
+
+# Parse 'weekday'
+combined['weekday'] = combined['release_date'].dt.weekday
+
+# fill Nan in 'weekday' column with the most common weekday value - 4
+combined['weekday'].fillna(4, inplace=True)
+
+# Parse 'month'
+combined['month'] = combined['release_date'].dt.month
+
+# fill Nan in 'month' with the most common month value - 9
+combined['month'].fillna(9, inplace=True)
+
+# Parse 'year'
+combined['year'] = combined['release_date'].dt.year
+
+# fill Nan in 'year' with the median value of the 'year' column
+combined['year'].fillna(combined['year'].median(), inplace=True)
+
+# Parse 'day'
+combined['day'] = combined['release_date'].dt.day
+
+# fill Nan with the most common day value - 1
+combined['day'].fillna(1, inplace=True)
+
+# Drop the original 'release_date' column
+combined.drop(columns =['release_date'], inplace=True)
+
+
+# In[164]:
+
+
+combined['runtime'].fillna(combined['runtime'].median(), inplace=True)
+
+
+# In[165]:
+
+
+combined.head()
+
+
+# In[166]:
+
+
+combined['status'].fillna('Released', inplace=True)
+
+
+# In[168]:
+
+
+combined['gender_0_number'] = combined['cast'].apply(lambda row: sum([x['gender'] == 0 for x in row]))
+combined['gender_1_number'] = combined['cast'].apply(lambda row: sum([x['gender'] == 1 for x in row]))
+combined['gender_2_number'] = combined['cast'].apply(lambda row: sum([x['gender'] == 2 for x in row]))
+
+
+# In[169]:
+
+
+combined['gender_0_number'].head()
+
+
+# In[170]:
+
+
+combined['cast_number'] =         combined['cast'].apply(lambda x: len(x))
+
+
+# In[171]:
+
+
+combined['cast_number'].head()
+
+
+# In[172]:
+
+
+def parse_cast(x):
+    myindx = ['cast1', 'cast2', 'cast3', 'cast4', 'cast5']
+    out = [-1]*5
+    if type(x) != str:
+        for i in range(min([5,len(x)])):
+            out[i] = x[i]['id']
+    return pd.Series(out, index=myindx)
+
+
+# In[173]:
+
+
+combined[['cast1', 'cast2', 'cast3', 'cast4', 'cast5']] = combined['cast'].apply(parse_cast)
+combined.drop(columns='cast', inplace=True)
+
+
+# In[174]:
+
+
+combined['cast1'].head()
+
+
+# In[175]:
+
+
+combined['crew_number'] = combined['crew'].apply(lambda x: len(x))
+
+
+# In[176]:
+
+
+combined['crew_number'].head()
+
+
+# In[178]:
+
+
+combined['crew'].iloc[0]
+
+
+# In[179]:
+
+
+# function to parse the Director and Producer from the 'crew' column
+def parse_crew(x):
+    myindx = ['Director', 'Producer']
+    out = [-1]*2
+    if type(x) != str:
+        for item in x:
+            if item['job'] == 'Director':
+                out[0] = item['id']
+            elif item['job'] == 'Producer':
+                out[1] = item['id']
+    return pd.Series(out, index=myindx)
+
+
+# In[180]:
+
+
+combined[['Director', 'Producer']] = combined['crew'].apply(parse_crew)
+combined.drop(columns='crew', inplace=True)
+
+
+# In[181]:
+
+
+combined['budget_log'] = np.log1p(combined['budget'])
+combined['pop_log'] = np.log1p(combined['popularity'])
+
+
+# In[188]:
+
+
+cols = ['genre1','genre2','genre3']
+allitems = list(set(combined[cols].values.ravel().tolist()))
+labeler = LabelEncoder()
+labeler.fit(allitems)
+combined[cols] = combined[cols].apply(lambda x: labeler.transform(x))
+
+
+# In[189]:
+
+
+
+combined[cols].head()
+
+
+# In[190]:
+
+
+cols = ['prod1', 'prod2', 'prod3']
+allitems = list(set(combined[cols].values.ravel().tolist()))
+labeler = LabelEncoder()
+labeler.fit(allitems)
+combined[cols] = combined[cols].apply(lambda x: labeler.transform(x))
+
+
+# In[191]:
+
+
+cols = ['country1', 'country2', 'country3']
+allitems = list(set(combined[cols].values.ravel().tolist()))
+labeler = LabelEncoder()
+labeler.fit(allitems)
+combined[cols] = combined[cols].apply(lambda x: labeler.transform(x))
+
+
+# In[192]:
+
+
+cols = ['lang1', 'lang2', 'lang3']
+allitems = list(set(combined[cols].values.ravel().tolist()))
+labeler = LabelEncoder()
+labeler.fit(allitems)
+combined[cols] = combined[cols].apply(lambda x: labeler.transform(x))
+
+
+# In[193]:
+
+
+cols = ['key1', 'key2', 'key3']
+allitems = list(set(combined[cols].values.ravel().tolist()))
+labeler = LabelEncoder()
+labeler.fit(allitems)
+combined[cols] = combined[cols].apply(lambda x: labeler.transform(x))
+
+
+# In[194]:
+
+
+combined.select_dtypes('object').columns
+
+
+# In[196]:
+
+
+combined_dummy = combined.copy()
+cat_col = combined.select_dtypes('object').columns
+combined_dummy[cat_col] = combined_dummy[cat_col].apply(lambda x: LabelEncoder().fit_transform(x))
+
+
+# In[198]:
+
+
+combined_dummy['original_language'].head()
+
+
+# In[199]:
+
+
+train_data = combined_dummy.iloc[:ntrain]
+test_data = combined_dummy.iloc[-ntest:]
+
+
+# In[200]:
+
+
+train_data.shape
+
+
+# In[201]:
+
+
+# Drop the 'revenue' column, it is the values to predict 
+X_train = train_data.drop(columns='revenue').values
+
+# The log transformation of the revenue gives better results, hence, we will use it
+y_train = np.log1p(train_data['revenue'].values)
+
+# Drop the 'revenue' column, will be filled at the end when the model will be ready
+X_test = test_data.drop(columns='revenue').values
+
+
+# In[203]:
+
+
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import cross_val_score, KFold, cross_val_predict
+from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import mean_squared_error
+
+
+kf = KFold(n_splits=5, shuffle=True, random_state=123)
+
+
+lr = LinearRegression()
+y_pred = cross_val_predict(lr, X_train, y_train, cv=kf)
+y_pred[y_pred < 0 ] = 0
+
+# print a result for kaggle website competition format
+print('RMSLE: {0:.2f}'.format(np.sqrt(mean_squared_error(y_train, y_pred))))
+
+
+
+
+
