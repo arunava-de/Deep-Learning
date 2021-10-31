@@ -3,4 +3,5 @@ data/
 .DS_Store
 .ipynb_checkpoints/
 tut2-model.pt
+.data/
 .vector_cache/
