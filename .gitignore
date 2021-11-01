@@ -4,4 +4,5 @@ data/
 .ipynb_checkpoints/
 tut2-model.pt
 .data/
+models/
 .vector_cache/
